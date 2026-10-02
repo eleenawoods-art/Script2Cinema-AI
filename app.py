@@ -1,4 +1,4 @@
-```python
+
 import re
 import shutil
 import subprocess
@@ -1277,4 +1277,4 @@ st.caption(
     "Long-form + Shorts • "
     "No app-added watermark"
 )
-```
+
