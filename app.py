@@ -1,3 +1,4 @@
+```python
 import re
 import shutil
 import subprocess
@@ -8,7 +9,7 @@ import streamlit as st
 
 
 # ============================================================
-# CONFIG
+# APP CONFIG
 # ============================================================
 
 st.set_page_config(
@@ -18,35 +19,37 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-BASE_DIR = Path(__file__).parent
-OUTPUT_DIR = BASE_DIR / "outputs"
+APP_DIR = Path(__file__).parent
+OUTPUT_DIR = APP_DIR / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 # ============================================================
-# SCRIPT FUNCTIONS
+# SCRIPT ANALYSIS
 # ============================================================
 
-def detect_scenes(script):
+def detect_scenes(script: str):
+    """Detect scene headings or split a long script into blocks."""
+
     if not script.strip():
         return []
 
-    pattern = re.compile(
+    heading_pattern = re.compile(
         r"(?im)^(scene\s+\d+|int\.|ext\.|chapter\s+\d+|سین\s*\d+).*$"
     )
 
-    matches = list(pattern.finditer(script))
+    matches = list(heading_pattern.finditer(script))
 
     if matches:
         scenes = []
 
         for i, match in enumerate(matches):
             start = match.start()
-            end = (
-                matches[i + 1].start()
-                if i + 1 < len(matches)
-                else len(script)
-            )
+
+            if i + 1 < len(matches):
+                end = matches[i + 1].start()
+            else:
+                end = len(script)
 
             scenes.append(
                 {
@@ -58,10 +61,11 @@ def detect_scenes(script):
 
         return scenes
 
+    # Fallback for scripts without scene headings.
     blocks = [
-        x.strip()
-        for x in re.split(r"\n\s*\n\s*\n+", script)
-        if x.strip()
+        block.strip()
+        for block in re.split(r"\n\s*\n\s*\n+", script)
+        if block.strip()
     ]
 
     if not blocks:
@@ -77,7 +81,9 @@ def detect_scenes(script):
     ]
 
 
-def detect_characters(script):
+def detect_characters(script: str):
+    """Detect Character: dialogue and Character - dialogue."""
+
     characters = []
 
     patterns = [
@@ -95,7 +101,7 @@ def detect_characters(script):
     return characters
 
 
-def count_dialogues(script):
+def count_dialogues(script: str):
     pattern = (
         r"(?m)^\s*[A-Za-z][A-Za-z0-9 _'-]{1,40}"
         r"\s*:\s+.+$"
@@ -104,18 +110,20 @@ def count_dialogues(script):
     return len(re.findall(pattern, script))
 
 
-def estimate_duration(script):
-    words = len(
-        re.findall(
-            r"\b[\w'-]+\b",
-            script,
-        )
-    )
+def estimate_duration(script: str):
+    """Approximate narration duration."""
 
-    return words / 130 if words else 0
+    words = len(re.findall(r"\b[\w'-]+\b", script))
+
+    if not words:
+        return 0
+
+    return words / 130
 
 
-def clean_scene_text(text):
+def clean_dialogue_text(text: str):
+    """Remove scene headings and simple speaker labels."""
+
     text = re.sub(
         r"(?im)^\s*"
         r"(scene\s+\d+|int\.|ext\.|chapter\s+\d+|سین\s*\d+)"
@@ -136,15 +144,13 @@ def clean_scene_text(text):
         text,
     )
 
-    return re.sub(
-        r"\s+",
-        " ",
-        text,
-    ).strip()
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
 
 
 # ============================================================
-# FFMPEG
+# SYSTEM CHECKS
 # ============================================================
 
 def ffmpeg_available():
@@ -166,18 +172,24 @@ def run_command(command):
 # ============================================================
 
 def generate_voice(text, output_file, voice):
+    """
+    Optional Edge TTS narration.
+
+    If Edge TTS is unavailable, the video can still be rendered
+    without narration.
+    """
+
     try:
         import asyncio
         import edge_tts
 
         async def create_audio():
-            communicator = edge_tts.Communicate(
+            communicate = edge_tts.Communicate(
                 text,
                 voice,
             )
-            await communicator.save(
-                str(output_file)
-            )
+
+            await communicate.save(str(output_file))
 
         asyncio.run(create_audio())
 
@@ -191,87 +203,96 @@ def generate_voice(text, output_file, voice):
 
 
 # ============================================================
-# SCENE IMAGE
+# CINEMATIC SCENE VISUAL
 # ============================================================
 
-def create_scene_image(
+def create_scene_visual(
     title,
     text,
     output_file,
     width=1280,
     height=720,
 ):
+    """
+    Creates a clean cinematic scene visual using Pillow.
+
+    No app-added watermark is placed on the video.
+    """
+
     from PIL import Image, ImageDraw, ImageFont
 
     image = Image.new(
         "RGB",
         (width, height),
-        (12, 14, 24),
+        (10, 12, 20),
     )
 
     draw = ImageDraw.Draw(image)
 
-    # Background only.
-    # No watermark or branding is added.
+    # Cinematic gradient.
     for y in range(height):
-        ratio = y / height
-
-        r = int(12 + 18 * ratio)
-        g = int(14 + 20 * ratio)
-        b = int(24 + 38 * ratio)
+        value = int(15 + 35 * (y / height))
 
         draw.line(
             (0, y, width, y),
-            fill=(r, g, b),
+            fill=(
+                value // 2,
+                value // 2,
+                value,
+            ),
         )
 
     try:
         title_font = ImageFont.truetype(
             "DejaVuSans-Bold.ttf",
-            48,
+            52,
         )
 
         body_font = ImageFont.truetype(
             "DejaVuSans.ttf",
-            30,
+            34,
+        )
+
+        small_font = ImageFont.truetype(
+            "DejaVuSans.ttf",
+            22,
         )
 
     except Exception:
         title_font = ImageFont.load_default()
         body_font = ImageFont.load_default()
+        small_font = ImageFont.load_default()
 
+    # Frame.
     draw.rectangle(
         (
-            60,
-            60,
-            width - 60,
-            height - 60,
+            70,
+            70,
+            width - 70,
+            height - 70,
         ),
-        outline=(160, 165, 180),
+        outline=(220, 220, 220),
         width=2,
     )
 
     draw.text(
-        (100, 100),
-        title[:80],
+        (105, 105),
+        title[:70],
         font=title_font,
         fill=(245, 245, 245),
     )
 
+    # Wrap body.
     words = text.split()
 
     lines = []
     current = ""
 
     for word in words:
-        candidate = (
-            f"{current} {word}".strip()
-        )
+        candidate = f"{current} {word}".strip()
 
         if len(candidate) > 58:
-            if current:
-                lines.append(current)
-
+            lines.append(current)
             current = word
         else:
             current = candidate
@@ -279,22 +300,27 @@ def create_scene_image(
     if current:
         lines.append(current)
 
-    y = 205
+    y = 220
 
-    for line in lines[:10]:
+    for line in lines[:9]:
         draw.text(
-            (100, y),
+            (105, y),
             line,
             font=body_font,
-            fill=(225, 225, 230),
+            fill=(225, 225, 225),
         )
 
-        y += 46
+        y += 48
 
-    image.save(
-        output_file,
-        format="PNG",
+    # Small product label.
+    draw.text(
+        (105, height - 115),
+        "SCRIPT2CINEMA",
+        font=small_font,
+        fill=(155, 155, 155),
     )
+
+    image.save(output_file)
 
 
 # ============================================================
@@ -304,43 +330,43 @@ def create_scene_image(
 def render_scene(
     scene,
     duration,
-    temp_dir,
-    voice,
+    temp_directory,
+    voice_name,
 ):
-    number = scene["number"]
+    scene_number = scene["number"]
 
     image_file = (
-        temp_dir
-        / f"scene_{number:03d}.png"
-    )
-
-    audio_file = (
-        temp_dir
-        / f"scene_{number:03d}.mp3"
+        Path(temp_directory)
+        / f"scene_{scene_number:03d}.png"
     )
 
     video_file = (
-        temp_dir
-        / f"scene_{number:03d}.mp4"
+        Path(temp_directory)
+        / f"scene_{scene_number:03d}.mp4"
     )
 
-    text = clean_scene_text(
+    audio_file = (
+        Path(temp_directory)
+        / f"scene_{scene_number:03d}.mp3"
+    )
+
+    dialogue = clean_dialogue_text(
         scene["text"]
     )
 
-    create_scene_image(
+    create_scene_visual(
         scene["title"],
-        text or " ",
+        dialogue or "Cinematic scene",
         image_file,
     )
 
-    audio_created = False
+    has_audio = False
 
-    if text:
-        audio_created = generate_voice(
-            text[:12000],
+    if dialogue:
+        has_audio = generate_voice(
+            dialogue[:12000],
             audio_file,
-            voice,
+            voice_name,
         )
 
     command = [
@@ -352,7 +378,7 @@ def render_scene(
         str(image_file),
     ]
 
-    if audio_created:
+    if has_audio:
         command.extend(
             [
                 "-i",
@@ -376,10 +402,6 @@ def render_scene(
             "30",
             "-c:v",
             "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            "20",
             "-pix_fmt",
             "yuv420p",
             "-movflags",
@@ -387,21 +409,18 @@ def render_scene(
         ]
     )
 
-    if audio_created:
+    if has_audio:
         command.extend(
             [
                 "-c:a",
                 "aac",
-                "-af",
-                "apad",
+                "-shortest",
             ]
         )
     else:
         command.append("-an")
 
-    command.append(
-        str(video_file)
-    )
+    command.append(str(video_file))
 
     result = run_command(command)
 
@@ -415,13 +434,13 @@ def render_scene(
 
 
 # ============================================================
-# COMBINE
+# VIDEO CONCATENATION
 # ============================================================
 
 def combine_videos(video_files, output_file):
     concat_file = (
         output_file.parent
-        / "concat.txt"
+        / "script2cinema_concat.txt"
     )
 
     with concat_file.open(
@@ -430,14 +449,15 @@ def combine_videos(video_files, output_file):
     ) as file:
 
         for video in video_files:
-            path = (
-                Path(video)
-                .resolve()
-                .as_posix()
+
+            safe_path = (
+                str(video)
+                .replace("\\", "/")
+                .replace("'", "'\\''")
             )
 
             file.write(
-                f"file '{path}'\n"
+                f"file '{safe_path}'\n"
             )
 
     result = run_command(
@@ -468,7 +488,7 @@ def combine_videos(video_files, output_file):
 # SUBTITLES
 # ============================================================
 
-def make_srt(
+def create_srt(
     scenes,
     total_seconds,
     output_file,
@@ -476,28 +496,25 @@ def make_srt(
     if not scenes:
         return False
 
-    per_scene = (
+    duration_per_scene = (
         total_seconds / len(scenes)
     )
 
-    def stamp(seconds):
-        total_ms = int(
-            seconds * 1000
+    def timestamp(seconds):
+
+        total = int(seconds)
+
+        milliseconds = int(
+            (seconds - total) * 1000
         )
 
-        hours = total_ms // 3600000
+        hours = total // 3600
 
         minutes = (
-            total_ms % 3600000
-        ) // 60000
+            total % 3600
+        ) // 60
 
-        seconds_only = (
-            total_ms % 60000
-        ) // 1000
-
-        milliseconds = (
-            total_ms % 1000
-        )
+        seconds_only = total % 60
 
         return (
             f"{hours:02d}:"
@@ -512,41 +529,41 @@ def make_srt(
         encoding="utf-8",
     ) as file:
 
-        for i, scene in enumerate(
+        for index, scene in enumerate(
             scenes,
             start=1,
         ):
+
             start = (
-                (i - 1)
-                * per_scene
-            )
+                index - 1
+            ) * duration_per_scene
 
             end = (
-                i
-                * per_scene
-            )
+                index
+            ) * duration_per_scene
 
-            text = scene["text"].strip()
+            text = clean_dialogue_text(
+                scene["text"]
+            )[:500]
 
             file.write(
-                f"{i}\n"
-                f"{stamp(start)} --> "
-                f"{stamp(end)}\n"
-                f"{text[:600]}\n\n"
+                f"{index}\n"
+                f"{timestamp(start)} --> "
+                f"{timestamp(end)}\n"
+                f"{text}\n\n"
             )
 
     return True
 
 
 def burn_subtitles(
-    video,
-    subtitle,
-    output,
+    video_file,
+    subtitle_file,
+    output_file,
 ):
     subtitle_path = (
-        Path(subtitle)
-        .resolve()
-        .as_posix()
+        str(subtitle_file)
+        .replace("\\", "/")
         .replace(":", "\\:")
     )
 
@@ -555,26 +572,26 @@ def burn_subtitles(
             "ffmpeg",
             "-y",
             "-i",
-            str(video),
+            str(video_file),
             "-vf",
             f"subtitles='{subtitle_path}'",
+            "-c:a",
+            "copy",
             "-c:v",
             "libx264",
             "-preset",
             "medium",
             "-crf",
             "20",
-            "-c:a",
-            "copy",
             "-movflags",
             "+faststart",
-            str(output),
+            str(output_file),
         ]
     )
 
     return (
         result.returncode == 0
-        and output.exists()
+        and output_file.exists()
     )
 
 
@@ -583,23 +600,26 @@ def burn_subtitles(
 # ============================================================
 
 def create_shorts(
-    video,
-    output_dir,
-    count=3,
+    video_file,
+    output_directory,
+    number_of_shorts=3,
 ):
-    output_dir.mkdir(
+    output_directory.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    results = []
+    shorts = []
 
-    for i in range(count):
-        start = i * 30
+    for index in range(
+        number_of_shorts
+    ):
 
-        output = (
-            output_dir
-            / f"short_{i + 1}.mp4"
+        start_time = index * 30
+
+        output_file = (
+            output_directory
+            / f"short_{index + 1:02d}.mp4"
         )
 
         result = run_command(
@@ -607,9 +627,9 @@ def create_shorts(
                 "ffmpeg",
                 "-y",
                 "-ss",
-                str(start),
+                str(start_time),
                 "-i",
-                str(video),
+                str(video_file),
                 "-t",
                 "30",
                 "-vf",
@@ -622,38 +642,21 @@ def create_shorts(
                 ),
                 "-c:v",
                 "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                "20",
                 "-c:a",
                 "aac",
                 "-movflags",
                 "+faststart",
-                str(output),
+                str(output_file),
             ]
         )
 
         if (
             result.returncode == 0
-            and output.exists()
-            and output.stat().st_size > 0
+            and output_file.exists()
         ):
-            results.append(output)
+            shorts.append(output_file)
 
-    return results
-
-
-# ============================================================
-# HEADER
-# ============================================================
-
-st.title("🎬 Script2Cinema AI")
-
-st.write(
-    "Turn your script into long-form videos "
-    "and Shorts."
-)
+    return shorts
 
 
 # ============================================================
@@ -685,6 +688,8 @@ with st.sidebar:
             ],
         )
 
+        custom_minutes = None
+
     else:
 
         duration_option = st.selectbox(
@@ -700,21 +705,22 @@ with st.sidebar:
             index=2,
         )
 
+        custom_minutes = None
+
         if duration_option == "Custom":
+
             custom_minutes = st.number_input(
-                "Custom duration",
+                "Custom duration (minutes)",
                 min_value=1,
                 max_value=180,
                 value=15,
                 step=1,
             )
-        else:
-            custom_minutes = None
 
     aspect_ratio = st.selectbox(
         "Aspect Ratio",
         [
-            "16:9 — YouTube",
+            "16:9 — YouTube Long Video",
             "9:16 — Shorts / Reels / TikTok",
             "1:1 — Square",
         ],
@@ -735,7 +741,7 @@ with st.sidebar:
         ],
     )
 
-    voice = st.selectbox(
+    voice_name = st.selectbox(
         "Voice",
         [
             "en-US-AriaNeural",
@@ -746,7 +752,7 @@ with st.sidebar:
         ],
     )
 
-    emotion = st.selectbox(
+    emotion_mode = st.selectbox(
         "Emotion",
         [
             "Automatic",
@@ -760,16 +766,16 @@ with st.sidebar:
         ],
     )
 
-    music = st.selectbox(
+    music_mode = st.selectbox(
         "Background Music",
         [
-            "None",
             "Automatic",
             "Cinematic",
             "Emotional",
             "Suspense",
             "Action",
             "Calm",
+            "None",
         ],
     )
 
@@ -778,37 +784,69 @@ with st.sidebar:
         value=True,
     )
 
-    create_shorts_option = st.checkbox(
+    auto_shorts = st.checkbox(
         "Create Shorts from final video",
         value=True,
     )
 
 
 # ============================================================
-# SCRIPT INPUT
+# HEADER
+# ============================================================
+
+st.markdown(
+    """
+    <div style="
+        padding:1.3rem 1.5rem;
+        border-radius:18px;
+        border:1px solid rgba(128,128,128,.25);
+        margin-bottom:1rem;
+    ">
+        <h1 style="margin:0;">
+            🎬 Script2Cinema AI
+        </h1>
+
+        <p style="margin:.5rem 0 0;">
+            Long-form + Shorts production
+            from one script.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# SCRIPT
 # ============================================================
 
 st.subheader("📝 Your Script")
 
 script = st.text_area(
-    "Paste your complete script here",
+    "Complete script",
     height=450,
-    placeholder=(
-        "Scene 1\n\n"
-        "Ali enters the room.\n\n"
-        "Ali: Tum yahan kaise aaye?\n\n"
-        "Sara: Mujhe tumse zaroori baat karni hai.\n\n"
-        "Scene 2\n\n"
-        "Ali looks at Sara.\n\n"
-        "Ali: Kaisi baat?\n\n"
-        "Sara: Woh raaz jo tum das saal se chhupa rahe ho..."
-    ),
+    placeholder="""Scene 1
+
+Ali enters the room.
+
+Ali: Tum yahan kaise aaye?
+
+Sara: Mujhe tumse zaroori baat karni hai.
+
+Scene 2
+
+Ali looks at Sara.
+
+Ali: Kaisi baat?
+
+Sara: Woh raaz jo tum das saal se chhupa rahe ho...""",
+    label_visibility="collapsed",
 )
 
 st.caption(
-    "Long scripts are supported. "
-    "Scene headings and Character: dialogue "
-    "format give better analysis."
+    "Long scripts supported. "
+    "Use Scene headings and Character: dialogue "
+    "for cleaner detection."
 )
 
 
@@ -816,15 +854,17 @@ st.caption(
 # BUTTONS
 # ============================================================
 
-col1, col2 = st.columns(2)
+column_one, column_two = st.columns(2)
 
-with col1:
+with column_one:
+
     analyze = st.button(
         "🔍 Analyze Script",
         use_container_width=True,
     )
 
-with col2:
+with column_two:
+
     generate = st.button(
         "🎬 Create Video",
         use_container_width=True,
@@ -833,47 +873,58 @@ with col2:
 
 
 # ============================================================
-# PROCESS
+# ANALYSIS
 # ============================================================
 
 if analyze or generate:
 
     if not script.strip():
+
         st.warning(
             "Pehle apni script paste karein."
         )
+
         st.stop()
 
     scenes = detect_scenes(script)
+
     characters = detect_characters(script)
+
     dialogues = count_dialogues(script)
+
     estimated = estimate_duration(script)
 
     st.divider()
 
-    st.subheader("🔎 Script Analysis")
+    st.subheader(
+        "🔎 Script Analysis"
+    )
 
-    a, b, c, d = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
 
-    a.metric(
+    c1.metric(
         "Scenes",
         len(scenes),
     )
 
-    b.metric(
+    c2.metric(
         "Characters",
         len(characters),
     )
 
-    c.metric(
+    c3.metric(
         "Dialogue Lines",
         dialogues,
     )
 
-    d.metric(
+    c4.metric(
         "Estimated Voice Time",
         f"{estimated:.1f} min",
     )
+
+    # --------------------------------------------------------
+    # CHARACTERS
+    # --------------------------------------------------------
 
     if characters:
 
@@ -881,18 +932,26 @@ if analyze or generate:
             "👥 Characters Detected"
         )
 
-        cols = st.columns(
-            min(4, len(characters))
+        character_columns = st.columns(
+            min(
+                max(len(characters), 1),
+                4,
+            )
         )
 
-        for i, character in enumerate(
+        for index, character in enumerate(
             characters
         ):
-            cols[
-                i % len(cols)
+
+            character_columns[
+                index % len(character_columns)
             ].write(
                 f"**{character}**"
             )
+
+    # --------------------------------------------------------
+    # SCENES
+    # --------------------------------------------------------
 
     st.subheader(
         "🎞️ Scene Breakdown"
@@ -902,133 +961,165 @@ if analyze or generate:
 
         with st.expander(
             f"Scene {scene['number']} — "
-            f"{scene['title']}"
+            f"{scene['title']}",
+            expanded=False,
         ):
+
             st.write(
                 scene["text"]
             )
 
+            scene_columns = st.columns(4)
+
+            scene_columns[0].write(
+                "🎙️ Voice"
+            )
+
+            scene_columns[1].write(
+                "😊 Emotion"
+            )
+
+            scene_columns[2].write(
+                "🎵 Music"
+            )
+
+            scene_columns[3].write(
+                "🎥 Visual"
+            )
+
 
 # ============================================================
-# GENERATE
+# GENERATION
 # ============================================================
 
     if generate:
 
+        st.divider()
+
         if not ffmpeg_available():
 
             st.error(
-                "FFmpeg is not available."
+                "FFmpeg is not installed "
+                "or is not available in PATH."
             )
 
             st.info(
-                "Make sure packages.txt contains only: ffmpeg"
+                "Install FFmpeg on the computer/server "
+                "before using actual MP4 rendering."
             )
 
             st.stop()
 
+        # Determine target duration.
         if duration_option == "Custom":
 
-            total_seconds = (
-                custom_minutes * 60
+            target_seconds = max(
+                60,
+                int(custom_minutes * 60),
             )
 
         else:
 
-            number = int(
-                re.search(
-                    r"\d+",
-                    duration_option,
-                ).group()
+            match = re.search(
+                r"(\d+)",
+                duration_option,
             )
 
-            if "second" in duration_option:
-                total_seconds = number
-            else:
-                total_seconds = number * 60
+            target_seconds = (
+                int(match.group(1))
+                if match
+                else 60
+            )
 
-        per_scene = max(
+        scene_duration = max(
             3,
-            total_seconds / max(
-                1,
-                len(scenes),
-            ),
+            target_seconds
+            / max(1, len(scenes)),
         )
-
-        st.divider()
 
         st.subheader(
-            "🎬 Production"
+            "🎬 Video Production"
         )
 
-        st.write(
-            f"**Mode:** {video_type}"
-        )
+        st.info(
+            f"""
+            **Mode:** {video_type}
 
-        st.write(
-            f"**Target duration:** {duration_option}"
-        )
+            **Target:** {duration_option}
 
-        st.write(
-            f"**Voice:** {voice_style}"
-        )
+            **Aspect Ratio:** {aspect_ratio}
 
-        st.write(
-            f"**Emotion:** {emotion}"
-        )
+            **Scenes:** {len(scenes)}
 
-        st.write(
-            f"**Music:** {music}"
+            **Voice:** {voice_style}
+
+            **Emotion:** {emotion_mode}
+
+            **Music:** {music_mode}
+
+            **Subtitles:** {"On" if subtitles else "Off"}
+            """
         )
 
         progress = st.progress(
             0,
-            text="Preparing...",
+            text="Preparing production...",
         )
 
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory() as temp_directory:
 
-            temp_dir = Path(temp)
+            temp_directory = Path(
+                temp_directory
+            )
 
-            rendered_scenes = []
+            scene_videos = []
 
-            for i, scene in enumerate(
+            for index, scene in enumerate(
                 scenes
             ):
 
                 progress.progress(
                     int(
-                        (i / max(1, len(scenes)))
+                        (
+                            index
+                            / max(
+                                1,
+                                len(scenes),
+                            )
+                        )
                         * 80
                     ),
                     text=(
                         f"Rendering scene "
-                        f"{i + 1} of "
-                        f"{len(scenes)}"
+                        f"{index + 1}/"
+                        f"{len(scenes)}..."
                     ),
                 )
 
-                result = render_scene(
-                    scene,
-                    per_scene,
-                    temp_dir,
-                    voice,
+                rendered = render_scene(
+                    scene=scene,
+                    duration=scene_duration,
+                    temp_directory=temp_directory,
+                    voice_name=voice_name,
                 )
 
-                if result:
-                    rendered_scenes.append(
-                        result
+                if rendered:
+                    scene_videos.append(
+                        rendered
                     )
 
-            if not rendered_scenes:
+            if not scene_videos:
+
+                progress.empty()
 
                 st.error(
-                    "No scene could be rendered."
+                    "No scene video could "
+                    "be rendered."
                 )
 
                 st.stop()
 
-            final_video = (
+            final_file = (
                 OUTPUT_DIR
                 / "script2cinema_final.mp4"
             )
@@ -1038,92 +1129,96 @@ if analyze or generate:
                 text="Combining scenes...",
             )
 
-            success = combine_videos(
-                rendered_scenes,
-                final_video,
+            combined = combine_videos(
+                scene_videos,
+                final_file,
             )
 
-            if not success:
+            if not combined:
+
+                progress.empty()
 
                 st.error(
-                    "Could not create final MP4."
+                    "Final MP4 assembly failed."
                 )
 
                 st.stop()
 
+            # ------------------------------------------------
+            # SUBTITLES
+            # ------------------------------------------------
+
             if subtitles:
 
                 subtitle_file = (
-                    temp_dir
+                    temp_directory
                     / "subtitles.srt"
                 )
 
-                subtitled_video = (
+                subtitle_video = (
                     OUTPUT_DIR
-                    / "script2cinema_subtitled.mp4"
+                    / "script2cinema_final_subtitles.mp4"
                 )
 
-                make_srt(
+                create_srt(
                     scenes,
-                    total_seconds,
+                    target_seconds,
                     subtitle_file,
                 )
 
-                subtitle_success = burn_subtitles(
-                    final_video,
+                burned = burn_subtitles(
+                    final_file,
                     subtitle_file,
-                    subtitled_video,
+                    subtitle_video,
                 )
 
-                if subtitle_success:
-                    final_video = subtitled_video
+                if burned:
+                    final_file = subtitle_video
 
             progress.progress(
                 100,
-                text="Video complete.",
+                text="Production complete.",
             )
 
             st.success(
-                "🎉 Your video is ready."
+                "🎉 Video ready."
             )
 
-            video_bytes = (
-                final_video.read_bytes()
-            )
+            video_data = final_file.read_bytes()
 
             st.video(
-                video_bytes
+                video_data
             )
 
             st.download_button(
-                "⬇️ Download MP4",
-                data=video_bytes,
-                file_name="script2cinema_video.mp4",
+                "⬇️ Download Final MP4",
+                data=video_data,
+                file_name="script2cinema_final.mp4",
                 mime="video/mp4",
                 use_container_width=True,
             )
 
             # ------------------------------------------------
-            # SHORTS
+            # AUTOMATIC SHORTS
             # ------------------------------------------------
 
-            if create_shorts_option:
+            if auto_shorts:
 
                 st.divider()
 
                 st.subheader(
-                    "📱 Shorts"
+                    "📱 Automatic Shorts"
                 )
 
-                shorts_dir = (
+                shorts_directory = (
                     OUTPUT_DIR
                     / "shorts"
                 )
 
                 shorts = create_shorts(
-                    final_video,
-                    shorts_dir,
-                    count=3,
+                    final_file,
+                    shorts_directory,
+                    number_of_shorts=3,
                 )
 
                 if shorts:
@@ -1132,32 +1227,34 @@ if analyze or generate:
                         f"{len(shorts)} Shorts created."
                     )
 
-                    for i, short in enumerate(
+                    for index, short_file in enumerate(
                         shorts,
                         start=1,
                     ):
 
-                        short_bytes = (
-                            short.read_bytes()
-                        )
-
                         with st.expander(
-                            f"Short {i}"
+                            f"Short {index}"
                         ):
 
+                            short_data = (
+                                short_file.read_bytes()
+                            )
+
                             st.video(
-                                short_bytes
+                                short_data
                             )
 
                             st.download_button(
-                                f"⬇️ Download Short {i}",
-                                data=short_bytes,
+                                f"⬇️ Download Short {index}",
+                                data=short_data,
                                 file_name=(
-                                    f"script2cinema_short_{i}.mp4"
+                                    f"script2cinema_short_"
+                                    f"{index}.mp4"
                                 ),
                                 mime="video/mp4",
                                 key=(
-                                    f"download_short_{i}"
+                                    f"short_download_"
+                                    f"{index}"
                                 ),
                                 use_container_width=True,
                             )
@@ -1165,7 +1262,7 @@ if analyze or generate:
                 else:
 
                     st.info(
-                        "Shorts could not be created."
+                        "Shorts could not be extracted."
                     )
 
 
@@ -1178,5 +1275,6 @@ st.divider()
 st.caption(
     "Script2Cinema AI • "
     "Long-form + Shorts • "
-    "No watermark"
+    "No app-added watermark"
 )
+```
