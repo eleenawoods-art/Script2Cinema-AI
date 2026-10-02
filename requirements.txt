@@ -1,0 +1,5 @@
+```text
+streamlit>=1.40
+pillow>=10.0
+edge-tts>=7.0
+```
